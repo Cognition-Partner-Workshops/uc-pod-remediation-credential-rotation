@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: credential-rotation-agent
+  labels:
+    app: credential-rotation-agent
+    app.kubernetes.io/name: credential-rotation-agent
+    app.kubernetes.io/component: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: credential-rotation-agent
+  template:
+    metadata:
+      labels:
+        app: credential-rotation-agent
+    spec:
+      serviceAccountName: credential-rotation-agent
+      containers:
+        - name: rotation-monitor
+          image: credential-rotation-agent:latest
+          command: ["python", "-m", "src.agents.rotation_monitor"]
+          envFrom:
+            - configMapRef:
+                name: credential-rotation-config
+            - secretRef:
+                name: credential-rotation-secrets
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+        - name: failure-detector
+          image: credential-rotation-agent:latest
+          command: ["python", "-m", "src.agents.failure_detector"]
+          envFrom:
+            - configMapRef:
+                name: credential-rotation-config
+            - secretRef:
+                name: credential-rotation-secrets
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi

@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: credential-rotation-config
+  labels:
+    app: credential-rotation-agent
+data:
+  K8S_NAMESPACE: "production"
+  ROTATION_CHECK_INTERVAL: "60"
+  FAILURE_CHECK_INTERVAL: "30"
+  MAX_RESTART_ATTEMPTS: "3"
+  APPROVAL_TIMEOUT_MINUTES: "30"
+  LOG_LEVEL: "INFO"
