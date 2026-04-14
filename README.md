@@ -1,69 +1,83 @@
-# Automated Remediation of Pod Failures After Credential Rotations
+# L1 Virtual Engineer Agent
 
 ## Overview
 
-Production incidents frequently occur after password/credential rotations when application pods continue using stale credentials. This project provides an agentic solution that automates detection, approval, and remediation to reduce downtime and operational risk.
+A production-ready L1 support agent that automates incident triage and resolution by executing Standard Operating Procedures (SOPs) from ServiceNow. The agent receives incidents, matches them to the correct SOP/runbook, executes diagnostic steps using approved integrations (Splunk, IR360/MQ, Autosys, Windows shares), and updates the incident with evidence and outcomes.
 
-## Problem Statement
+## Key Capabilities
 
-L3 teams manually track rotations, monitor services, and restart affected pods, creating delays and increasing the risk of prolonged outages. Without automation, mean time to recovery (MTTR) is measured in hours rather than minutes.
+- **Incident Intake**: Webhook listener + polling worker for ServiceNow incidents (idempotent, deduplicated)
+- **SOP Matching**: Keyword/regex + CI/category/assignment group scoring with confidence thresholds
+- **Step Execution Engine**: Executes SOP steps sequentially with branching, retries, and circuit breakers
+- **Tool Adapters**: Splunk REST API, IR360 MQ checks, Autosys CLI (read-only), Windows share log reader
+- **Evidence Collection**: Structured audit trail with timestamps, tool outputs, and sanitised evidence
+- **Escalation**: Automatic escalation to L2 when confidence is low, access fails, SOP is missing, or remediation requires approval
+- **Safety**: Read-only by default; approval gates for any write/change actions
 
 ## Architecture
 
 ```
-┌─────────────────────┐     ┌──────────────────────┐     ┌─────────────────────┐
-│  Rotation Monitoring│────▶│  Failure Detection    │────▶│  Approval Workflow  │
-│  Agent              │     │  Agent                │     │  Agent (ServiceNow) │
-└─────────────────────┘     └──────────────────────┘     └─────────┬───────────┘
-                                                                    │
-                                                          ┌─────────▼───────────┐
-                                                          │  Remediation        │
-                                                          │  Orchestrator Agent │
-                                                          └─────────────────────┘
+┌──────────────┐      ┌──────────────┐      ┌──────────────────┐
+│  ServiceNow  │─────▶│  Incident    │─────▶│  SOP Matcher     │
+│  (webhook/   │      │  Processor   │      │  (confidence     │
+│   polling)   │      │              │      │   scoring)       │
+└──────────────┘      └──────┬───────┘      └────────┬─────────┘
+                             │                       │
+                      ┌──────▼───────────────────────▼─────────┐
+                      │         SOP Execution Engine            │
+                      │  ┌─────────┬──────────┬──────────────┐ │
+                      │  │ Splunk  │  IR360   │  Autosys     │ │
+                      │  │ Adapter │  MQ Adpt │  CLI Runner  │ │
+                      │  ├─────────┼──────────┼──────────────┤ │
+                      │  │ WinShare│ Decision │  NOTE        │ │
+                      │  │ Reader  │ Engine   │  Handler     │ │
+                      │  └─────────┴──────────┴──────────────┘ │
+                      └──────────────────┬─────────────────────┘
+                                         │
+                      ┌──────────────────▼─────────────────────┐
+                      │  ServiceNow Updater                    │
+                      │  (work notes, evidence, state changes) │
+                      └────────────────────────────────────────┘
 ```
-
-### Agent Responsibilities
-
-| Agent | Role |
-|-------|------|
-| **Rotation Monitoring Agent** | Tracks scheduled credential rotations and maps impacted services |
-| **Failure Detection Agent** | Identifies pods running with outdated credentials using logs and metrics |
-| **Approval Workflow Agent** | Initiates approval requests via ServiceNow integration |
-| **Remediation Orchestrator Agent** | Restarts or refreshes affected services upon approval |
 
 ## Project Structure
 
 ```
-├── src/
-│   ├── agents/                  # Agent implementations
-│   │   ├── rotation_monitor.py  # Tracks credential rotation schedules
-│   │   ├── failure_detector.py  # Detects pods with stale credentials
-│   │   ├── approval_workflow.py # ServiceNow approval integration
-│   │   └── remediation.py       # Pod restart/refresh orchestration
-│   ├── config/                  # Configuration management
-│   │   └── settings.py          # App settings and env config
-│   ├── models/                  # Data models
-│   │   ├── credential.py        # Credential and rotation models
-│   │   └── service_account.py   # Service account inventory
-│   └── utils/                   # Shared utilities
-│       ├── k8s_client.py        # Kubernetes API client wrapper
-│       └── servicenow_client.py # ServiceNow API client
-├── k8s/
-│   ├── base/                    # Base Kubernetes manifests
-│   │   ├── deployment.yaml      # Agent deployment
-│   │   ├── configmap.yaml       # Configuration
-│   │   ├── rbac.yaml            # RBAC for pod management
-│   │   └── secret.yaml          # Secret template
-│   └── overlays/
-│       └── production/          # Production kustomize overlay
-│           └── kustomization.yaml
-├── data/
-│   └── sample_inventory.json    # Sample service account inventory
-├── tests/                       # Test suite
-├── docs/                        # Documentation
-├── requirements.txt
+├── src/l1_agent/
+│   ├── main.py                    # Service entry point (webhook + poller)
+│   ├── demo.py                    # Demo mode with sample data
+│   ├── config/settings.py         # Environment-based configuration
+│   ├── models/
+│   │   ├── incident.py            # ServiceNow incident model
+│   │   ├── sop.py                 # SOP/runbook + step type models
+│   │   └── evidence.py            # Step results + execution summary
+│   ├── clients/
+│   │   └── servicenow_client.py   # ServiceNow REST API client
+│   ├── engine/
+│   │   ├── sop_matcher.py         # SOP matching with confidence scoring
+│   │   ├── sop_parser.py          # Parse SOPs from ServiceNow or JSON
+│   │   ├── executor.py            # Step execution engine
+│   │   └── incident_processor.py  # End-to-end incident orchestration
+│   ├── adapters/
+│   │   ├── base.py                # Adapter interface
+│   │   ├── splunk_adapter.py      # Splunk REST API client
+│   │   ├── ir360_adapter.py       # IR360 MQ adapter (API + CLI)
+│   │   ├── autosys_adapter.py     # Autosys CLI runner (read-only)
+│   │   ├── windows_share_adapter.py # SMB/UNC log file reader
+│   │   └── mock_adapters.py       # Mock adapters for demo/testing
+│   └── utils/
+│       ├── logging.py             # Structured JSON logging + redaction
+│       ├── retry.py               # Exponential backoff + circuit breaker
+│       └── metrics.py             # In-process metrics collector
+├── data/sample_sops/              # Example SOP definitions (JSON)
+├── tests/
+│   ├── unit/                      # Unit tests with mocks
+│   └── integration/               # Integration test scaffolding
+├── ARCHITECTURE.md                # Design document
+├── RUNBOOK.md                     # Operational runbook
+├── pyproject.toml
 ├── Dockerfile
-└── .gitignore
+└── .env.example
 ```
 
 ## Quick Start
@@ -72,40 +86,83 @@ L3 teams manually track rotations, monitor services, and restart affected pods, 
 # Install dependencies
 pip install -r requirements.txt
 
-# Configure environment
+# Run the demo (no real credentials needed)
+python -m src.l1_agent.demo
+
+# Run the full service (requires ServiceNow config)
 cp .env.example .env
-# Edit .env with your Kubernetes cluster and ServiceNow details
+# Edit .env with your credentials
+python -m src.l1_agent.main
 
-# Run the rotation monitoring agent
-python -m src.agents.rotation_monitor
-
-# Run the failure detection agent
-python -m src.agents.failure_detector
+# Run tests
+pytest tests/ -v
 ```
+
+## Demo Mode
+
+The demo processes a sample MQ queue depth incident through a complete SOP:
+
+```bash
+python -m src.l1_agent.demo
+```
+
+This demonstrates:
+1. Incident parsing from ServiceNow payload
+2. SOP matching with confidence scoring
+3. Step-by-step execution (MQ checks, Splunk search, Autosys status)
+4. Decision branching based on results
+5. Work note generation and incident update payload
 
 ## Configuration
 
-Set the following environment variables (see `.env.example`):
+See `.env.example` for all configuration variables. Key settings:
 
 | Variable | Description |
 |----------|-------------|
-| `K8S_NAMESPACE` | Target Kubernetes namespace |
-| `K8S_KUBECONFIG` | Path to kubeconfig file |
-| `SERVICENOW_URL` | ServiceNow instance URL |
-| `SERVICENOW_USER` | ServiceNow API user |
-| `SERVICENOW_PASSWORD` | ServiceNow API password |
-| `ROTATION_CHECK_INTERVAL` | Seconds between rotation checks (default: 60) |
-| `FAILURE_CHECK_INTERVAL` | Seconds between failure scans (default: 30) |
+| `SERVICENOW_BASE_URL` | ServiceNow instance URL |
+| `SERVICENOW_USERNAME` / `PASSWORD` | API credentials |
+| `SPLUNK_BASE_URL` / `TOKEN` | Splunk REST API access |
+| `IR360_BASE_URL` / `API_KEY` | IR360 MQ monitoring |
+| `AGENT_SOP_CONFIDENCE_THRESHOLD` | Minimum SOP match confidence (default: 0.6) |
+| `AGENT_DEMO_MODE` | Use mock adapters (default: false) |
 
-## Business Outcomes
+## SOP Schema
 
-- **Reduced MTTR**: Faster detection and remediation of credential-related failures
-- **Operational Reliability**: Fewer production incidents after rotations
-- **Risk Reduction**: Controlled, auditable remediation workflows
+SOPs are defined as JSON with the following structure:
 
-## Controls
+```json
+{
+  "sop_id": "SOP-MQ-001",
+  "title": "MQ Queue Depth High",
+  "keywords": ["queue depth", "mq"],
+  "applicable_services": ["PaymentService"],
+  "applicable_categories": ["Middleware"],
+  "steps": [
+    {
+      "step_id": "step-1",
+      "step_type": "MQ_CHECK",
+      "parameters": {"queue_manager": "QM1", "queue": "Q1", "action": "depth"},
+      "on_success": "step-2",
+      "on_failure": "step-escalate"
+    }
+  ],
+  "escalation_criteria": {
+    "escalate_on_access_denied": true,
+    "escalate_on_write_action": true
+  }
+}
+```
 
-Human approval gates remain mandatory before any production restart. All remediation actions are logged for audit compliance.
+Supported step types: `SPLUNK_SEARCH`, `MQ_CHECK`, `FILE_CHECK`, `AUTOSYS_STATUS`, `DECISION`, `NOTE`
+
+## Security
+
+- Read-only by default; no destructive actions without explicit SOP permission + approval gate
+- Secrets loaded from environment variables (vault integration for production)
+- Sensitive fields redacted from structured logs
+- UNC paths validated against allow-list
+- Autosys commands restricted to read-only allow-list
+- CLI inputs validated against injection patterns
 
 ## License
 
