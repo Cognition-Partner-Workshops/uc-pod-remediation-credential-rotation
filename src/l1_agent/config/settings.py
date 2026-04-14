@@ -96,6 +96,8 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> "Settings":
+        from dotenv import load_dotenv
+        load_dotenv()
         return cls(
             servicenow=ServiceNowSettings(
                 base_url=os.getenv("SERVICENOW_BASE_URL", ""),
