@@ -1,9 +1,20 @@
-"""Incident processor: end-to-end orchestration from intake to resolution/escalation."""
+"""Incident processor: end-to-end orchestration from intake to resolution/escalation.
+
+Supports two modes:
+1. AI-driven (default when LLM is enabled): The LLM analyzes the ticket,
+   selects the SOP, drives tool calls, interprets results, and decides
+   whether to resolve or escalate.
+2. Rule-based fallback: Uses keyword/regex SOP matching and deterministic
+   step execution when the LLM is unavailable.
+"""
 
 from __future__ import annotations
 
 from typing import List, Optional, Set
 
+from src.l1_agent.ai.ai_executor import AIExecutor
+from src.l1_agent.ai.analyzer import AIAnalyzer, AIMatchResult
+from src.l1_agent.ai.llm_client import LLMClient
 from src.l1_agent.clients.servicenow_client import ServiceNowClient
 from src.l1_agent.engine.executor import SOPExecutor
 from src.l1_agent.engine.sop_matcher import MatchResult, SOPMatcher
@@ -20,11 +31,10 @@ logger = get_logger("incident_processor")
 class IncidentProcessor:
     """Orchestrates the full lifecycle of processing a single incident.
 
-    1. Fetch/receive incident
-    2. Match to SOP
-    3. Execute SOP steps
-    4. Update incident with results
-    5. Escalate if needed
+    When an LLM client is provided the processor operates in AI mode:
+      1. The AI analyzer selects the SOP (with reasoning).
+      2. The AI executor drives tool calls via the LLM.
+    Otherwise it falls back to the deterministic rule-based engine.
     """
 
     def __init__(
@@ -35,6 +45,9 @@ class IncidentProcessor:
         executor: SOPExecutor,
         sop_cache: Optional[List[SOP]] = None,
         confidence_threshold: float = 0.6,
+        llm_client: Optional[LLMClient] = None,
+        ai_analyzer: Optional[AIAnalyzer] = None,
+        ai_executor: Optional[AIExecutor] = None,
     ) -> None:
         self._snow = snow_client
         self._matcher = sop_matcher
@@ -43,6 +56,16 @@ class IncidentProcessor:
         self._sop_cache = sop_cache or []
         self._threshold = confidence_threshold
         self._processed_ids: Set[str] = set()
+
+        # AI components (optional)
+        self._llm = llm_client
+        self._ai_analyzer = ai_analyzer
+        self._ai_executor = ai_executor
+        self._ai_enabled = llm_client is not None
+
+    @property
+    def ai_enabled(self) -> bool:
+        return self._ai_enabled
 
     async def process_incident(self, incident: Incident) -> ExecutionSummary:
         """Process a single incident end-to-end."""
@@ -62,10 +85,138 @@ class IncidentProcessor:
         metrics.increment("incidents.received")
         logger.info("Processing incident %s: %s", incident.number, incident.short_description)
 
+        if self._ai_enabled:
+            return await self._process_with_ai(incident)
+        else:
+            return await self._process_rule_based(incident)
+
+    # ── AI-driven processing ──────────────────────────────────────────
+
+    async def _process_with_ai(self, incident: Incident) -> ExecutionSummary:
+        """Process incident using AI-driven analysis and execution."""
+        logger.info("Using AI-driven processing for %s", incident.number)
+
         # 1. Post initial work note
         await self._post_note(
             incident,
-            f"[L1 Agent] Incident received. Searching for applicable SOP...\n"
+            "[L1 Agent - AI] Incident received. Starting AI-powered analysis...\n"
+            f"Category: {incident.category} | CI: {incident.cmdb_ci}",
+        )
+
+        # 2. AI preliminary analysis
+        if self._ai_analyzer:
+            analysis = await self._ai_analyzer.analyze_incident(incident)
+            await self._post_note(
+                incident,
+                f"[L1 Agent - AI] Preliminary analysis:\n{analysis}",
+            )
+
+        # 3. AI-driven SOP selection
+        if not self._sop_cache:
+            await self._refresh_sop_cache()
+
+        if self._ai_analyzer:
+            ai_match = await self._ai_analyzer.select_sop(
+                incident, self._sop_cache
+            )
+        else:
+            # Fallback to rule-based matching even in AI mode
+            rule_match = self._matcher.match(incident, self._sop_cache)
+            ai_match = AIMatchResult(
+                sop=rule_match.sop,
+                confidence=rule_match.confidence,
+                rationale=rule_match.rationale,
+            )
+
+        if not ai_match.sop:
+            return await self._escalate_no_sop_ai(incident, ai_match)
+
+        if ai_match.confidence < self._threshold:
+            return await self._escalate_low_confidence_ai(incident, ai_match)
+
+        sop = ai_match.sop
+        await self._post_note(
+            incident,
+            f"[L1 Agent - AI] SOP selected: {sop.title} "
+            f"(confidence: {ai_match.confidence:.2f})\n"
+            f"AI rationale: {ai_match.rationale}",
+        )
+
+        # 4. Set incident to In Progress
+        await self._update_state(incident, state=2)
+
+        # 5. AI-driven SOP execution
+        if self._ai_executor:
+            summary = await self._ai_executor.execute_sop(
+                incident,
+                sop,
+                work_note_callback=self._snow.add_work_note,
+            )
+        else:
+            # Fallback to rule-based execution
+            summary = await self._executor.execute_sop(
+                incident,
+                sop,
+                work_note_callback=self._snow.add_work_note,
+            )
+
+        # 6. Post conclusion
+        await self._post_conclusion(incident, summary)
+        return summary
+
+    async def _escalate_no_sop_ai(
+        self, incident: Incident, match: AIMatchResult
+    ) -> ExecutionSummary:
+        """Escalate when AI finds no applicable SOP."""
+        note = (
+            "[L1 Agent - AI] ESCALATION: No applicable SOP found.\n"
+            f"AI reasoning: {match.rationale}\n"
+            "Routing to L2 for manual investigation."
+        )
+        await self._post_note(incident, note)
+        metrics.increment("incidents.escalated", labels={"reason": "no_sop_ai"})
+        return ExecutionSummary(
+            incident_number=incident.number,
+            sop_id="",
+            sop_title="",
+            outcome=ExecutionOutcome.ESCALATED,
+            escalation_reason=f"AI: No applicable SOP. {match.rationale}",
+        )
+
+    async def _escalate_low_confidence_ai(
+        self, incident: Incident, match: AIMatchResult
+    ) -> ExecutionSummary:
+        """Escalate when AI's SOP confidence is below threshold."""
+        sop = match.sop
+        sop_title = sop.title if sop else "N/A"
+        sop_id = sop.sop_id if sop else ""
+        note = (
+            f"[L1 Agent - AI] ESCALATION: Low confidence SOP match "
+            f"({match.confidence:.2f}).\n"
+            f"Best match: {sop_title}\n"
+            f"AI rationale: {match.rationale}\n"
+            "Routing to L2 for confirmation."
+        )
+        await self._post_note(incident, note)
+        metrics.increment("incidents.escalated", labels={"reason": "low_confidence_ai"})
+        return ExecutionSummary(
+            incident_number=incident.number,
+            sop_id=sop_id,
+            sop_title=sop_title,
+            outcome=ExecutionOutcome.ESCALATED,
+            escalation_reason=f"AI: Low confidence ({match.confidence:.2f}). {match.rationale}",
+        )
+
+    # ── Rule-based processing (fallback) ──────────────────────────────
+
+    async def _process_rule_based(self, incident: Incident) -> ExecutionSummary:
+        """Process incident using deterministic rule-based engine."""
+        logger.info("Using rule-based processing for %s", incident.number)
+
+        # 1. Post initial work note
+        await self._post_note(
+            incident,
+            "[L1 Agent] Incident received. Searching for applicable SOP...\n"
             f"Category: {incident.category} | CI: {incident.cmdb_ci}",
         )
 

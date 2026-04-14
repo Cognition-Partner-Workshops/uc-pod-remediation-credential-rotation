@@ -66,7 +66,24 @@ Response:
 | `SERVICENOW_PASSWORD` | API password | (from vault) |
 | `SERVICENOW_ASSIGNMENT_GROUP` | Incident queue to monitor | `L1-Support` |
 
-### 2.2 Optional Variables
+### 2.2 LLM / AI Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LLM_ENABLED` | `true` | Enable AI-driven mode (set `false` for rule-based fallback) |
+| `LLM_ENDPOINT` | `https://api.openai.com/v1` | OpenAI-compatible API base URL |
+| `LLM_API_KEY` | (none) | API key for the LLM endpoint. **Store in a secrets vault in production.** |
+| `LLM_MODEL` | `gpt-4` | Model name (e.g. `gpt-4`, `gpt-4o`, `gpt-3.5-turbo`) |
+| `LLM_TEMPERATURE` | `0.2` | Sampling temperature (lower = more deterministic) |
+| `LLM_MAX_TOKENS` | `4096` | Maximum tokens in LLM response |
+| `LLM_TIMEOUT_SECONDS` | `60` | HTTP timeout for LLM API calls |
+
+> **Security note**: The `LLM_API_KEY` is loaded from the environment variable
+> and is never logged or included in work notes. In production, use a secrets
+> vault (AWS Secrets Manager, HashiCorp Vault, etc.) and inject the key at
+> container startup.
+
+### 2.3 Optional Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -242,10 +259,43 @@ The agent tracks these metrics in-process:
 - Deploy multiple instances behind a load balancer (ensure shared dedup store for production)
 - For very high volume, consider event-driven intake (Kafka/RabbitMQ)
 
-## 6. Security Checklist
+## 6. AI Mode Operations
+
+### 6.1 How the AI Decides
+
+In AI mode, the LLM is the primary decision-maker:
+
+1. **Incident analysis** - The LLM reads the ticket description and produces a preliminary analysis.
+2. **SOP selection** - The LLM uses the `select_sop` function to pick the best SOP, returning confidence and rationale.
+3. **Investigation** - The LLM drives a tool-calling loop, invoking `splunk_search`, `mq_check`, `autosys_status`, or `file_check` as needed.
+4. **Decision** - Based on tool results, the LLM calls `resolve_incident` (with resolution summary) or `escalate_to_l2` (with reason and findings).
+
+### 6.2 Switching Between AI and Rule-Based
+
+```bash
+# AI mode (default when LLM_ENABLED=true)
+LLM_ENABLED=true python -m src.l1_agent.main
+
+# Rule-based fallback
+LLM_ENABLED=false python -m src.l1_agent.main
+```
+
+If the LLM endpoint is unreachable at runtime, the agent automatically falls back to rule-based mode for that incident.
+
+### 6.3 Demo Mode with AI
+
+```bash
+# Run the demo to see both AI-driven and rule-based flows
+python -m src.l1_agent.demo
+```
+
+The demo uses `MockLLMClient` (no real API calls) and shows the AI analyzing a sample MQ incident, selecting a SOP, calling tools, and resolving the issue.
+
+## 7. Security Checklist
 
 - [ ] Service account uses least-privilege permissions
 - [ ] All secrets stored in vault (not environment variables in production)
+- [ ] `LLM_API_KEY` injected via secrets vault, never in code or logs
 - [ ] `WINDOWS_SHARE_ALLOWED_PREFIXES` configured to restrict file access
 - [ ] `AUTOSYS_ALLOWED_COMMANDS` limited to read-only commands
 - [ ] Network policies restrict egress to required endpoints only

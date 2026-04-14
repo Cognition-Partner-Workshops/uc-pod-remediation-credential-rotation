@@ -1,4 +1,8 @@
-"""Demo mode: process a sample incident with a sample SOP using mock adapters."""
+"""Demo mode: process a sample incident with a sample SOP using mock adapters.
+
+Runs both the AI-driven flow (using a mock LLM) and the rule-based fallback
+to demonstrate the full agent capabilities.
+"""
 
 from __future__ import annotations
 
@@ -12,6 +16,9 @@ from src.l1_agent.adapters.mock_adapters import (
     MockSplunkAdapter,
     MockWindowsShareAdapter,
 )
+from src.l1_agent.ai.ai_executor import AIExecutor
+from src.l1_agent.ai.analyzer import AIAnalyzer
+from src.l1_agent.ai.mock_llm import MockLLMClient
 from src.l1_agent.engine.executor import SOPExecutor
 from src.l1_agent.engine.sop_matcher import SOPMatcher
 from src.l1_agent.models.incident import Incident
@@ -179,54 +186,12 @@ class MockServiceNowClient:
         pass
 
 
-async def run_demo() -> None:
-    """Run the demo scenario end-to-end."""
-    setup_logging("INFO")
-    logger.info("=== L1 Virtual Engineer Agent - Demo Mode ===")
+def _print_summary(summary: object, mock_snow: MockServiceNowClient) -> None:
+    """Print execution summary and work notes."""
+    from src.l1_agent.models.evidence import ExecutionSummary
 
-    # Build components with mocks
-    mock_snow = MockServiceNowClient()
-    adapters = {
-        "splunk": MockSplunkAdapter(),
-        "ir360": MockIR360Adapter(),
-        "windows_share": MockWindowsShareAdapter(),
-        "autosys": MockAutosysAdapter(),
-    }
-    executor = SOPExecutor(adapters=adapters)
-    matcher = SOPMatcher(confidence_threshold=0.6)
+    assert isinstance(summary, ExecutionSummary)
 
-    # Load sample data
-    incident = Incident.from_servicenow(SAMPLE_INCIDENT)
-    sop = _load_sample_sop()
-
-    print("\n" + "=" * 70)
-    print("  L1 VIRTUAL ENGINEER AGENT - DEMO")
-    print("=" * 70)
-
-    # Step 1: Show incident
-    print("\n--- Incident Received ---")
-    print(f"  Number:      {incident.number}")
-    print(f"  Description: {incident.short_description}")
-    print(f"  Category:    {incident.category}/{incident.subcategory}")
-    print(f"  CI:          {incident.cmdb_ci}")
-    print(f"  Priority:    {incident.priority}")
-
-    # Step 2: Match SOP
-    match_result = matcher.match(incident, [sop])
-    print("\n--- SOP Matching ---")
-    print(f"  Matched SOP: {match_result.sop.title if match_result.sop else 'None'}")
-    print(f"  Confidence:  {match_result.confidence:.2f}")
-    print(f"  Rationale:   {match_result.rationale}")
-
-    # Step 3: Execute SOP
-    print("\n--- SOP Execution ---")
-    summary = await executor.execute_sop(
-        incident,
-        sop,
-        work_note_callback=mock_snow.add_work_note,
-    )
-
-    # Step 4: Show results
     print("\n--- Execution Summary ---")
     print(f"  Outcome:     {summary.outcome.value.upper()}")
     print(f"  Steps run:   {len(summary.step_results)}")
@@ -236,21 +201,20 @@ async def run_demo() -> None:
 
     print("\n--- Step Results ---")
     for r in summary.step_results:
-        status_icon = {"success": "OK", "fail": "FAIL", "skip": "SKIP", "escalated": "ESC"}.get(
-            r.status.value, "?"
-        )
+        status_icon = {
+            "success": "OK", "fail": "FAIL",
+            "skip": "SKIP", "escalated": "ESC",
+        }.get(r.status.value, "?")
         print(f"  [{status_icon}] {r.step_id} ({r.step_type})")
         if r.evidence:
             for line in r.evidence.split("\n")[:3]:
                 print(f"        {line}")
 
-    # Step 5: Show work notes
     print(f"\n--- Work Notes Posted ({len(mock_snow.work_notes)}) ---")
     for i, wn in enumerate(mock_snow.work_notes):
         preview = wn["note"][:120].replace("\n", " | ")
         print(f"  [{i+1}] {preview}...")
 
-    # Step 6: Show incident update payload
     print("\n--- Incident Update Payload ---")
     update_payload = {
         "work_notes": summary.to_work_note(),
@@ -258,8 +222,101 @@ async def run_demo() -> None:
     }
     print(json.dumps(update_payload, indent=2)[:1000])
 
+
+async def run_demo() -> None:
+    """Run the demo scenario end-to-end."""
+    setup_logging("INFO")
+    logger.info("=== L1 Virtual Engineer Agent - Demo Mode ===")
+
+    # Shared mock adapters
+    adapters = {
+        "splunk": MockSplunkAdapter(),
+        "ir360": MockIR360Adapter(),
+        "windows_share": MockWindowsShareAdapter(),
+        "autosys": MockAutosysAdapter(),
+    }
+
+    # Load sample data
+    incident = Incident.from_servicenow(SAMPLE_INCIDENT)
+    sop = _load_sample_sop()
+
     print("\n" + "=" * 70)
-    print("  Demo complete.")
+    print("  L1 VIRTUAL ENGINEER AGENT - DEMO")
+    print("=" * 70)
+
+    # Show incident
+    print("\n--- Incident Received ---")
+    print(f"  Number:      {incident.number}")
+    print(f"  Description: {incident.short_description}")
+    print(f"  Category:    {incident.category}/{incident.subcategory}")
+    print(f"  CI:          {incident.cmdb_ci}")
+    print(f"  Priority:    {incident.priority}")
+
+    # ═══════════════════════════════════════════════════════════════════
+    #  PART 1: AI-DRIVEN MODE (Mock LLM)
+    # ═══════════════════════════════════════════════════════════════════
+    print("\n" + "=" * 70)
+    print("  PART 1: AI-DRIVEN MODE (using Mock LLM)")
+    print("=" * 70)
+
+    mock_snow_ai = MockServiceNowClient()
+    mock_llm = MockLLMClient()  # auto-generates realistic tool calls
+    ai_analyzer = AIAnalyzer(llm_client=mock_llm)
+    ai_executor = AIExecutor(
+        llm_client=mock_llm,
+        adapters=adapters,
+    )
+
+    # AI SOP selection
+    print("\n--- AI Incident Analysis ---")
+    analysis = await ai_analyzer.analyze_incident(incident)
+    print(f"  {analysis[:200]}")
+
+    print("\n--- AI SOP Selection ---")
+    ai_match = await ai_analyzer.select_sop(incident, [sop])
+    print(f"  Selected SOP: {ai_match.sop.title if ai_match.sop else 'None'}")
+    print(f"  Confidence:   {ai_match.confidence:.2f}")
+    print(f"  AI Rationale: {ai_match.rationale[:200]}")
+
+    # AI-driven execution (LLM decides which tools to call)
+    print("\n--- AI-Driven SOP Execution ---")
+    print("  (The LLM autonomously calls tools and interprets results)")
+    ai_summary = await ai_executor.execute_sop(
+        incident,
+        sop,
+        work_note_callback=mock_snow_ai.add_work_note,
+    )
+    _print_summary(ai_summary, mock_snow_ai)
+
+    # ═══════════════════════════════════════════════════════════════════
+    #  PART 2: RULE-BASED MODE (Fallback)
+    # ═══════════════════════════════════════════════════════════════════
+    print("\n" + "=" * 70)
+    print("  PART 2: RULE-BASED MODE (fallback, no LLM)")
+    print("=" * 70)
+
+    mock_snow_rule = MockServiceNowClient()
+    executor = SOPExecutor(adapters=adapters)
+    matcher = SOPMatcher(confidence_threshold=0.6)
+
+    # Rule-based SOP matching
+    match_result = matcher.match(incident, [sop])
+    print("\n--- Rule-Based SOP Matching ---")
+    print(f"  Matched SOP: {match_result.sop.title if match_result.sop else 'None'}")
+    print(f"  Confidence:  {match_result.confidence:.2f}")
+    print(f"  Rationale:   {match_result.rationale}")
+
+    # Rule-based execution
+    print("\n--- Rule-Based SOP Execution ---")
+    rule_summary = await executor.execute_sop(
+        incident,
+        sop,
+        work_note_callback=mock_snow_rule.add_work_note,
+    )
+    _print_summary(rule_summary, mock_snow_rule)
+
+    print("\n" + "=" * 70)
+    print("  Demo complete. Both AI-driven and rule-based modes demonstrated.")
     print("=" * 70 + "\n")
 
 

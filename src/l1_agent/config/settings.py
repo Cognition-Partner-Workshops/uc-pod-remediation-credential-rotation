@@ -53,6 +53,24 @@ class WindowsShareSettings:
 
 
 @dataclass(frozen=True)
+class LLMSettings:
+    """LLM / AI endpoint configuration.
+
+    The API key should be stored in a secrets vault in production.
+    Set LLM_API_KEY via environment variable or mount it from your
+    vault provider (e.g. AWS Secrets Manager, HashiCorp Vault).
+    """
+
+    endpoint: str = ""
+    api_key: str = ""  # loaded from secret manager in prod
+    model: str = "gpt-4"
+    temperature: float = 0.2
+    max_tokens: int = 4096
+    timeout_seconds: int = 60
+    enabled: bool = True
+
+
+@dataclass(frozen=True)
 class AgentSettings:
     sop_confidence_threshold: float = 0.6
     max_concurrent_incidents: int = 5
@@ -73,6 +91,7 @@ class Settings:
     ir360: IR360Settings = field(default_factory=IR360Settings)
     autosys: AutosysSettings = field(default_factory=AutosysSettings)
     windows_share: WindowsShareSettings = field(default_factory=WindowsShareSettings)
+    llm: LLMSettings = field(default_factory=LLMSettings)
     agent: AgentSettings = field(default_factory=AgentSettings)
 
     @classmethod
@@ -112,6 +131,15 @@ class Settings:
                 smb_username=os.getenv("SMB_USERNAME", ""),
                 smb_password=os.getenv("SMB_PASSWORD", ""),
                 smb_domain=os.getenv("SMB_DOMAIN", ""),
+            ),
+            llm=LLMSettings(
+                endpoint=os.getenv("LLM_ENDPOINT", ""),
+                api_key=os.getenv("LLM_API_KEY", ""),
+                model=os.getenv("LLM_MODEL", "gpt-4"),
+                temperature=float(os.getenv("LLM_TEMPERATURE", "0.2")),
+                max_tokens=int(os.getenv("LLM_MAX_TOKENS", "4096")),
+                timeout_seconds=int(os.getenv("LLM_TIMEOUT_SECONDS", "60")),
+                enabled=os.getenv("LLM_ENABLED", "true").lower() == "true",
             ),
             agent=AgentSettings(
                 sop_confidence_threshold=float(
