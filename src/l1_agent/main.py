@@ -20,6 +20,10 @@ from src.l1_agent.adapters.mock_adapters import (
 )
 from src.l1_agent.adapters.splunk_adapter import SplunkAdapter
 from src.l1_agent.adapters.windows_share_adapter import WindowsShareAdapter
+from src.l1_agent.ai.ai_executor import AIExecutor
+from src.l1_agent.ai.analyzer import AIAnalyzer
+from src.l1_agent.ai.llm_client import LLMClient
+from src.l1_agent.ai.mock_llm import MockLLMClient
 from src.l1_agent.clients.servicenow_client import ServiceNowClient
 from src.l1_agent.config.settings import Settings
 from src.l1_agent.engine.executor import SOPExecutor
@@ -50,12 +54,32 @@ class L1AgentService:
             retry_max_attempts=settings.agent.retry_max_attempts,
             retry_base_delay=settings.agent.retry_base_delay_seconds,
         )
+        # Wire AI components when LLM is enabled
+        llm_client = None
+        ai_analyzer = None
+        ai_executor = None
+        if settings.llm.enabled:
+            if settings.agent.demo_mode:
+                llm_client = MockLLMClient()
+                logger.info("AI mode enabled (demo: using MockLLMClient)")
+            else:
+                llm_client = LLMClient(settings.llm)
+                logger.info("AI mode enabled (endpoint: %s)", settings.llm.endpoint)
+            ai_analyzer = AIAnalyzer(llm_client)
+            ai_executor = AIExecutor(
+                llm_client=llm_client,
+                adapters=self._adapters,
+            )
+
         self._processor = IncidentProcessor(
             snow_client=self._snow_client,
             sop_matcher=self._sop_matcher,
             sop_parser=self._sop_parser,
             executor=self._executor,
             confidence_threshold=settings.agent.sop_confidence_threshold,
+            llm_client=llm_client,
+            ai_analyzer=ai_analyzer,
+            ai_executor=ai_executor,
         )
         self._running = False
         self._semaphore = asyncio.Semaphore(settings.agent.max_concurrent_incidents)

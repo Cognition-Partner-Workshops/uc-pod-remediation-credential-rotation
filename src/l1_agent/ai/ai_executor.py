@@ -77,7 +77,6 @@ class AIExecutor:
         self._llm = llm_client
         self._adapters = adapters
         self._max_iterations = max_tool_iterations
-        self._step_results: List[StepResult] = []
 
     async def execute_sop(
         self,
@@ -100,7 +99,7 @@ class AIExecutor:
         """
         set_correlation_id(incident.correlation_id)
         start_time = time.monotonic()
-        self._step_results = []
+        step_results: List[StepResult] = []
 
         logger.info(
             "AI executor starting SOP: %s for incident %s",
@@ -140,7 +139,8 @@ class AIExecutor:
                     await work_note_callback(
                         incident.sys_id, f"[L1 Agent - AI] {note_text}"
                     )
-                self._record_step(
+                _record_step(
+                    step_results,
                     step_id=f"note-{len(work_notes_posted)}",
                     step_type="NOTE",
                     status=StepStatus.SUCCESS,
@@ -169,7 +169,8 @@ class AIExecutor:
                     await work_note_callback(
                         incident.sys_id, f"[L1 Agent - AI] {escalation_note}"
                     )
-                self._record_step(
+                _record_step(
+                    step_results,
                     step_id="escalation",
                     step_type="ESCALATION",
                     status=StepStatus.ESCALATED,
@@ -195,7 +196,8 @@ class AIExecutor:
                     await work_note_callback(
                         incident.sys_id, f"[L1 Agent - AI] {resolve_note}"
                     )
-                self._record_step(
+                _record_step(
+                    step_results,
                     step_id="resolution",
                     step_type="RESOLUTION",
                     status=StepStatus.SUCCESS,
@@ -213,8 +215,9 @@ class AIExecutor:
 
             if not adapter:
                 error_msg = f"Tool '{tool_name}' not available (no adapter configured)"
-                self._record_step(
-                    step_id=f"tool-{tool_name}-{len(self._step_results)}",
+                _record_step(
+                    step_results,
+                    step_id=f"tool-{tool_name}-{len(step_results)}",
                     step_type=tool_name.upper(),
                     status=StepStatus.FAIL,
                     tool_called=tool_name,
@@ -230,8 +233,9 @@ class AIExecutor:
                 elapsed = (time.monotonic() - step_start) * 1000
 
                 if result.success:
-                    self._record_step(
-                        step_id=f"tool-{tool_name}-{len(self._step_results)}",
+                    _record_step(
+                        step_results,
+                        step_id=f"tool-{tool_name}-{len(step_results)}",
                         step_type=tool_name.upper(),
                         status=StepStatus.SUCCESS,
                         tool_called=adapter.adapter_name,
@@ -246,8 +250,9 @@ class AIExecutor:
                         "evidence": result.evidence_snippet,
                     })
                 else:
-                    self._record_step(
-                        step_id=f"tool-{tool_name}-{len(self._step_results)}",
+                    _record_step(
+                        step_results,
+                        step_id=f"tool-{tool_name}-{len(step_results)}",
                         step_type=tool_name.upper(),
                         status=StepStatus.FAIL,
                         tool_called=adapter.adapter_name,
@@ -264,8 +269,9 @@ class AIExecutor:
             except Exception as exc:
                 elapsed = (time.monotonic() - step_start) * 1000
                 error_msg = f"Tool execution error: {exc}"
-                self._record_step(
-                    step_id=f"tool-{tool_name}-{len(self._step_results)}",
+                _record_step(
+                    step_results,
+                    step_id=f"tool-{tool_name}-{len(step_results)}",
                     step_type=tool_name.upper(),
                     status=StepStatus.FAIL,
                     tool_called=tool_name,
@@ -296,7 +302,7 @@ class AIExecutor:
             sop_id=sop.sop_id,
             sop_title=sop.title,
             outcome=outcome,
-            step_results=list(self._step_results),
+            step_results=list(step_results),
             escalation_reason=escalation_reason,
             completed_at=datetime.now(timezone.utc).isoformat(),
             total_duration_ms=elapsed_total,
@@ -313,7 +319,7 @@ class AIExecutor:
             sop.sop_id,
             summary.outcome.value,
             elapsed_total,
-            len(self._step_results),
+            len(step_results),
         )
         return summary
 
@@ -358,32 +364,33 @@ class AIExecutor:
             "resolve_incident or escalate_to_l2 based on your findings."
         )
 
-    def _record_step(
-        self,
-        step_id: str,
-        step_type: str,
-        status: StepStatus,
-        tool_called: str,
-        input_summary: str,
-        output_summary: str,
-        evidence: str = "",
-        error_message: str = "",
-        duration_ms: float = 0.0,
-    ) -> None:
-        """Record a step result for the execution summary."""
-        self._step_results.append(
-            StepResult(
-                step_id=step_id,
-                step_type=step_type,
-                status=status,
-                evidence=evidence,
-                error_message=error_message,
-                tool_called=tool_called,
-                input_summary=input_summary,
-                output_summary=output_summary,
-                duration_ms=duration_ms,
-            )
+
+def _record_step(
+    results: List[StepResult],
+    step_id: str,
+    step_type: str,
+    status: StepStatus,
+    tool_called: str,
+    input_summary: str,
+    output_summary: str,
+    evidence: str = "",
+    error_message: str = "",
+    duration_ms: float = 0.0,
+) -> None:
+    """Record a step result for the execution summary."""
+    results.append(
+        StepResult(
+            step_id=step_id,
+            step_type=step_type,
+            status=status,
+            evidence=evidence,
+            error_message=error_message,
+            tool_called=tool_called,
+            input_summary=input_summary,
+            output_summary=output_summary,
+            duration_ms=duration_ms,
         )
+    )
 
 
 def _tool_to_adapter_key(tool_name: str) -> Optional[str]:
