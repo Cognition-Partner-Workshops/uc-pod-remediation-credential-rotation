@@ -113,12 +113,14 @@ class SplunkAdapter(BaseAdapter):
 
     async def _wait_for_job(self, sid: str, poll_interval: float = 2.0) -> None:
         """Poll until the Splunk search job completes."""
+        import time as _time
+
         url = f"{self._base_url}/services/search/jobs/{sid}"
         timeout = self._settings.search_timeout_seconds
-        elapsed = 0.0
+        start = _time.monotonic()
 
         async with aiohttp.ClientSession() as session:
-            while elapsed < timeout:
+            while (_time.monotonic() - start) < timeout:
                 async with session.get(
                     url,
                     headers=self._headers,
@@ -132,7 +134,6 @@ class SplunkAdapter(BaseAdapter):
                     if content.get("isDone"):
                         return
                 await asyncio.sleep(poll_interval)
-                elapsed += poll_interval
 
         raise TimeoutError(f"Splunk search job {sid} timed out after {timeout}s")
 

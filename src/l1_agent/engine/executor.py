@@ -22,6 +22,14 @@ from src.l1_agent.utils.retry import CircuitBreaker, retry_with_backoff
 logger = get_logger("executor")
 
 
+class _AdapterFailure(Exception):
+    """Raised inside the retry closure when an adapter returns success=False."""
+
+    def __init__(self, result: AdapterResult) -> None:
+        self.result = result
+        super().__init__(result.error or "adapter returned failure")
+
+
 class SOPExecutor:
     """Executes SOP steps sequentially, using the appropriate tool adapter for each step.
 
@@ -235,7 +243,14 @@ class SOPExecutor:
         cb = self._circuit_breakers.get(adapter_key)
 
         async def _run() -> AdapterResult:
-            return await adapter.execute(step.parameters)
+            result = await adapter.execute(step.parameters)
+            if not result.success:
+                # Raise so retry_with_backoff can see the failure and retry.
+                # Validation errors (missing required params) are not retryable
+                # but transient errors (network, timeout) are.  We surface
+                # all failures here and let the retry budget handle it.
+                raise _AdapterFailure(result)
+            return result
 
         try:
             adapter_result = await retry_with_backoff(
@@ -255,6 +270,18 @@ class SOPExecutor:
                 input_summary=str(step.parameters),
                 output_summary="Circuit breaker open; escalating",
             )
+        except _AdapterFailure as exc:
+            # All retries exhausted with adapter-level failures
+            adapter_result = exc.result
+            return StepResult(
+                step_id=step.step_id,
+                step_type=step.step_type,
+                status=StepStatus.FAIL,
+                error_message=adapter_result.error,
+                tool_called=adapter.adapter_name,
+                input_summary=str(step.parameters),
+                output_summary=adapter_result.summary(),
+            )
         except Exception as exc:
             return StepResult(
                 step_id=step.step_id,
@@ -266,26 +293,15 @@ class SOPExecutor:
                 output_summary=f"All retries exhausted: {exc}",
             )
 
-        if adapter_result.success:
-            return StepResult(
-                step_id=step.step_id,
-                step_type=step.step_type,
-                status=StepStatus.SUCCESS,
-                evidence=adapter_result.evidence_snippet,
-                tool_called=adapter.adapter_name,
-                input_summary=str(step.parameters),
-                output_summary=adapter_result.summary(),
-            )
-        else:
-            return StepResult(
-                step_id=step.step_id,
-                step_type=step.step_type,
-                status=StepStatus.FAIL,
-                error_message=adapter_result.error,
-                tool_called=adapter.adapter_name,
-                input_summary=str(step.parameters),
-                output_summary=adapter_result.summary(),
-            )
+        return StepResult(
+            step_id=step.step_id,
+            step_type=step.step_type,
+            status=StepStatus.SUCCESS,
+            evidence=adapter_result.evidence_snippet,
+            tool_called=adapter.adapter_name,
+            input_summary=str(step.parameters),
+            output_summary=adapter_result.summary(),
+        )
 
     @staticmethod
     def _handle_note_step(step: SOPStep, incident: Incident) -> StepResult:

@@ -87,7 +87,13 @@ class WindowsShareAdapter(BaseAdapter):
     def _is_allowed(self, path: str) -> bool:
         if not self._allowed_prefixes:
             return False
-        return any(path.startswith(prefix) for prefix in self._allowed_prefixes)
+        # Resolve path traversal sequences (e.g. /../) before checking prefix
+        import posixpath
+        normalised = posixpath.normpath(path)
+        return any(
+            normalised.startswith(posixpath.normpath(prefix))
+            for prefix in self._allowed_prefixes
+        )
 
     async def _read_file(self, path: str, last_n: int) -> List[str]:
         """Read last N lines from a file.

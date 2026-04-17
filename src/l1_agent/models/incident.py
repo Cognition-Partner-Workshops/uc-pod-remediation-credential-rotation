@@ -57,8 +57,8 @@ class Incident:
             subcategory=data.get("subcategory", ""),
             cmdb_ci=_display_value(data.get("cmdb_ci", "")),
             assignment_group=_display_value(data.get("assignment_group", "")),
-            priority=int(data.get("priority", 4)),
-            state=int(data.get("state", 1)),
+            priority=_safe_int(data.get("priority", 4), 4),
+            state=_safe_int(data.get("state", 1), 1),
             caller=_display_value(data.get("caller_id", "")),
             created_on=data.get("sys_created_on", ""),
         )
@@ -85,3 +85,17 @@ def _display_value(val: object) -> str:
     if isinstance(val, dict):
         return str(val.get("display_value", val.get("value", "")))
     return str(val)
+
+
+def _safe_int(val: object, default: int) -> int:
+    """Safely convert a value to int, handling ServiceNow dict format.
+
+    When ``sysparm_display_value=all`` is used, choice/integer fields
+    are returned as ``{"display_value": "2 - High", "value": "2"}``.
+    """
+    if isinstance(val, dict):
+        val = val.get("value", default)
+    try:
+        return int(val)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
