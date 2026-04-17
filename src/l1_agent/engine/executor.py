@@ -201,6 +201,10 @@ class SOPExecutor:
             StepType.MQ_CHECK.value: "ir360",
             StepType.FILE_CHECK.value: "windows_share",
             StepType.AUTOSYS_STATUS.value: "autosys",
+            StepType.DYNATRACE_VM_CHECK.value: "dynatrace",
+            StepType.DYNATRACE_METRICS.value: "dynatrace",
+            StepType.WEB_UI_CHECK.value: "webui",
+            StepType.MAINFRAME_CHECK.value: "mainframe",
         }
 
         adapter_key = adapter_map.get(step.step_type.upper())

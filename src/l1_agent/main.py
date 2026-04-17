@@ -11,14 +11,20 @@ from aiohttp import web
 
 from src.l1_agent.adapters.autosys_adapter import AutosysAdapter
 from src.l1_agent.adapters.base import BaseAdapter
+from src.l1_agent.adapters.dynatrace_adapter import DynatraceAdapter
 from src.l1_agent.adapters.ir360_adapter import IR360Adapter
+from src.l1_agent.adapters.mainframe_adapter import MainframeAdapter
 from src.l1_agent.adapters.mock_adapters import (
     MockAutosysAdapter,
+    MockDynatraceAdapter,
     MockIR360Adapter,
+    MockMainframeAdapter,
     MockSplunkAdapter,
+    MockWebUIScraperAdapter,
     MockWindowsShareAdapter,
 )
 from src.l1_agent.adapters.splunk_adapter import SplunkAdapter
+from src.l1_agent.adapters.webui_scraper_adapter import WebUIScraperAdapter
 from src.l1_agent.adapters.windows_share_adapter import WindowsShareAdapter
 from src.l1_agent.ai.ai_executor import AIExecutor
 from src.l1_agent.ai.analyzer import AIAnalyzer
@@ -92,12 +98,18 @@ class L1AgentService:
                 "ir360": MockIR360Adapter(),
                 "windows_share": MockWindowsShareAdapter(),
                 "autosys": MockAutosysAdapter(),
+                "dynatrace": MockDynatraceAdapter(),
+                "webui": MockWebUIScraperAdapter(),
+                "mainframe": MockMainframeAdapter(),
             }
         return {
             "splunk": SplunkAdapter(settings.splunk),
             "ir360": IR360Adapter(settings.ir360),
             "windows_share": WindowsShareAdapter(settings.windows_share),
             "autosys": AutosysAdapter(settings.autosys),
+            "dynatrace": DynatraceAdapter(settings.dynatrace),
+            "webui": WebUIScraperAdapter(settings.webui),
+            "mainframe": MainframeAdapter(settings.mainframe),
         }
 
     def _build_circuit_breakers(self, settings: Settings) -> Dict[str, CircuitBreaker]:
@@ -110,6 +122,9 @@ class L1AgentService:
             "ir360": CircuitBreaker(**cb_args),
             "windows_share": CircuitBreaker(**cb_args),
             "autosys": CircuitBreaker(**cb_args),
+            "dynatrace": CircuitBreaker(**cb_args),
+            "webui": CircuitBreaker(**cb_args),
+            "mainframe": CircuitBreaker(**cb_args),
         }
 
     # ── Webhook listener ──────────────────────────────────────────────

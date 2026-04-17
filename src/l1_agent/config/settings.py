@@ -53,6 +53,36 @@ class WindowsShareSettings:
 
 
 @dataclass(frozen=True)
+class DynatraceSettings:
+    """Dynatrace API configuration for VM health and metrics checks."""
+
+    base_url: str = ""
+    api_token: str = ""  # loaded from secret manager in prod
+    verify_ssl: bool = True
+    timeout_seconds: int = 30
+
+
+@dataclass(frozen=True)
+class WebUISettings:
+    """Web UI scraper configuration for application URL and GCAS checks."""
+
+    page_timeout_seconds: int = 30
+    allowed_domains: List[str] = field(default_factory=list)
+    chrome_binary_path: str = ""
+
+
+@dataclass(frozen=True)
+class MainframeSettings:
+    """Mainframe TN3270 configuration for BEIM ASYNC status checks."""
+
+    host: str = ""
+    port: int = 23
+    allowed_transactions: List[str] = field(default_factory=list)
+    default_navigation: List[dict] = field(default_factory=list)
+    timeout_seconds: int = 30
+
+
+@dataclass(frozen=True)
 class LLMSettings:
     """LLM / AI endpoint configuration.
 
@@ -91,6 +121,9 @@ class Settings:
     ir360: IR360Settings = field(default_factory=IR360Settings)
     autosys: AutosysSettings = field(default_factory=AutosysSettings)
     windows_share: WindowsShareSettings = field(default_factory=WindowsShareSettings)
+    dynatrace: DynatraceSettings = field(default_factory=DynatraceSettings)
+    webui: WebUISettings = field(default_factory=WebUISettings)
+    mainframe: MainframeSettings = field(default_factory=MainframeSettings)
     llm: LLMSettings = field(default_factory=LLMSettings)
     agent: AgentSettings = field(default_factory=AgentSettings)
 
@@ -133,6 +166,25 @@ class Settings:
                 smb_username=os.getenv("SMB_USERNAME", ""),
                 smb_password=os.getenv("SMB_PASSWORD", ""),
                 smb_domain=os.getenv("SMB_DOMAIN", ""),
+            ),
+            dynatrace=DynatraceSettings(
+                base_url=os.getenv("DYNATRACE_BASE_URL", ""),
+                api_token=os.getenv("DYNATRACE_API_TOKEN", ""),
+                verify_ssl=os.getenv("DYNATRACE_VERIFY_SSL", "true").lower() == "true",
+                timeout_seconds=int(os.getenv("DYNATRACE_TIMEOUT", "30")),
+            ),
+            webui=WebUISettings(
+                page_timeout_seconds=int(os.getenv("WEBUI_PAGE_TIMEOUT", "30")),
+                allowed_domains=_csv(os.getenv("WEBUI_ALLOWED_DOMAINS", "")),
+                chrome_binary_path=os.getenv("WEBUI_CHROME_BINARY", ""),
+            ),
+            mainframe=MainframeSettings(
+                host=os.getenv("MAINFRAME_HOST", ""),
+                port=int(os.getenv("MAINFRAME_PORT", "23")),
+                allowed_transactions=_csv(
+                    os.getenv("MAINFRAME_ALLOWED_TRANSACTIONS", "")
+                ),
+                timeout_seconds=int(os.getenv("MAINFRAME_TIMEOUT", "30")),
             ),
             llm=LLMSettings(
                 endpoint=os.getenv("LLM_ENDPOINT", ""),

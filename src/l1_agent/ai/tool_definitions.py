@@ -186,6 +186,162 @@ ESCALATE_TOOL: Dict[str, Any] = {
     },
 }
 
+DYNATRACE_VM_CHECK_TOOL: Dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "dynatrace_vm_check",
+        "description": (
+            "Check VM/host health using Dynatrace. Queries the Dynatrace "
+            "Entities API and Problems API to verify that a VM is healthy, "
+            "running, and has no active problems."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "host_name": {
+                    "type": "string",
+                    "description": "Name of the host/VM to check (e.g. 'app-server-01').",
+                },
+                "host_group": {
+                    "type": "string",
+                    "description": "Optional host group filter.",
+                },
+            },
+            "required": ["host_name"],
+        },
+    },
+}
+
+DYNATRACE_METRICS_CHECK_TOOL: Dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "dynatrace_metrics_check",
+        "description": (
+            "Query Dynatrace metrics (CPU, memory, etc.) to verify they are "
+            "within normal thresholds. Use this to check if resource utilisation "
+            "has returned to normal after an incident."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "host_name": {
+                    "type": "string",
+                    "description": "Host name to filter metrics for.",
+                },
+                "metric_selector": {
+                    "type": "string",
+                    "description": (
+                        "Dynatrace metric selector. Default: "
+                        "'builtin:host.cpu.usage,builtin:host.mem.usage'."
+                    ),
+                },
+                "time_range": {
+                    "type": "string",
+                    "description": "Relative time range (e.g. 'now-1h', 'now-2h').",
+                },
+            },
+            "required": ["host_name"],
+        },
+    },
+}
+
+WEB_UI_CHECK_TOOL: Dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "web_ui_check",
+        "description": (
+            "Check a web application URL by navigating to it and optionally "
+            "performing click-path steps. Verifies the page loads correctly, "
+            "expected elements/text are present, and no errors are detected. "
+            "Use this for Application URL checks and GCAS Launcher checks."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "The URL to navigate to and check.",
+                },
+                "check_type": {
+                    "type": "string",
+                    "enum": ["page_load", "click_path", "element_check"],
+                    "description": (
+                        "Type of check: page_load (verify page loads), "
+                        "click_path (execute click steps), "
+                        "element_check (verify specific element exists)."
+                    ),
+                },
+                "expected_text": {
+                    "type": "string",
+                    "description": "Text expected to appear on the page.",
+                },
+                "click_steps": {
+                    "type": "array",
+                    "description": "List of click-path steps for click_path check.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "action": {
+                                "type": "string",
+                                "enum": ["click", "wait", "assert_text", "assert_element"],
+                            },
+                            "selector": {
+                                "type": "string",
+                                "description": "CSS selector for the element.",
+                            },
+                            "value": {
+                                "type": "string",
+                                "description": "Value for wait (seconds) or assert_text.",
+                            },
+                            "name": {
+                                "type": "string",
+                                "description": "Human-readable step name.",
+                            },
+                        },
+                    },
+                },
+            },
+            "required": ["url"],
+        },
+    },
+}
+
+MAINFRAME_ASYNC_CHECK_TOOL: Dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "mainframe_async_check",
+        "description": (
+            "Check mainframe MF BEIM ASYNC job status via TN3270 terminal "
+            "emulator. Connects to the mainframe, navigates to the BEIM status "
+            "screen, and checks if jobs show the expected status (typically "
+            "'inact ok' for successful completion)."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "job_name": {
+                    "type": "string",
+                    "description": "Name of the mainframe job to check.",
+                },
+                "expected_status": {
+                    "type": "string",
+                    "description": "Expected job status (default: 'inact ok').",
+                },
+                "action": {
+                    "type": "string",
+                    "enum": ["async_status", "job_status", "screen_check"],
+                    "description": (
+                        "Action: async_status (check BEIM ASYNC jobs), "
+                        "job_status (check specific job), "
+                        "screen_check (capture screen content)."
+                    ),
+                },
+            },
+            "required": ["job_name"],
+        },
+    },
+}
+
 RESOLVE_INCIDENT_TOOL: Dict[str, Any] = {
     "type": "function",
     "function": {
@@ -220,6 +376,10 @@ def get_investigation_tools() -> List[Dict[str, Any]]:
         MQ_CHECK_TOOL,
         FILE_CHECK_TOOL,
         AUTOSYS_STATUS_TOOL,
+        DYNATRACE_VM_CHECK_TOOL,
+        DYNATRACE_METRICS_CHECK_TOOL,
+        WEB_UI_CHECK_TOOL,
+        MAINFRAME_ASYNC_CHECK_TOOL,
         POST_WORK_NOTE_TOOL,
         ESCALATE_TOOL,
         RESOLVE_INCIDENT_TOOL,

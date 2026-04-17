@@ -213,6 +213,9 @@ class AIExecutor:
             adapter_key = _tool_to_adapter_key(tool_name)
             adapter = self._adapters.get(adapter_key) if adapter_key else None
 
+            # Inject action parameter for tools that share an adapter
+            arguments = _inject_action(tool_name, arguments)
+
             if not adapter:
                 error_msg = f"Tool '{tool_name}' not available (no adapter configured)"
                 _record_step(
@@ -400,5 +403,25 @@ def _tool_to_adapter_key(tool_name: str) -> Optional[str]:
         "mq_check": "ir360",
         "file_check": "windows_share",
         "autosys_status": "autosys",
+        "dynatrace_vm_check": "dynatrace",
+        "dynatrace_metrics_check": "dynatrace",
+        "web_ui_check": "webui",
+        "mainframe_async_check": "mainframe",
     }
     return mapping.get(tool_name)
+
+
+def _inject_action(tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    """Inject the correct 'action' parameter for tools that share an adapter.
+
+    For example, dynatrace_vm_check and dynatrace_metrics_check both route
+    to the DynatraceAdapter but need different action values.
+    """
+    action_map = {
+        "dynatrace_vm_check": "vm_health",
+        "dynatrace_metrics_check": "metrics",
+    }
+    action = action_map.get(tool_name)
+    if action and "action" not in arguments:
+        arguments = {**arguments, "action": action}
+    return arguments

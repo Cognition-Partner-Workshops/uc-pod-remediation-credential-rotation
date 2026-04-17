@@ -12,8 +12,11 @@ from pathlib import Path
 
 from src.l1_agent.adapters.mock_adapters import (
     MockAutosysAdapter,
+    MockDynatraceAdapter,
     MockIR360Adapter,
+    MockMainframeAdapter,
     MockSplunkAdapter,
+    MockWebUIScraperAdapter,
     MockWindowsShareAdapter,
 )
 from src.l1_agent.ai.ai_executor import AIExecutor
@@ -234,6 +237,9 @@ async def run_demo() -> None:
         "ir360": MockIR360Adapter(),
         "windows_share": MockWindowsShareAdapter(),
         "autosys": MockAutosysAdapter(),
+        "dynatrace": MockDynatraceAdapter(),
+        "webui": MockWebUIScraperAdapter(),
+        "mainframe": MockMainframeAdapter(),
     }
 
     # Load sample data

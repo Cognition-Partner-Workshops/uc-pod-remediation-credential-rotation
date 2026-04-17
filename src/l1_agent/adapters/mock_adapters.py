@@ -7,7 +7,7 @@ to any real external systems.
 from __future__ import annotations
 
 import json
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from src.l1_agent.adapters.base import AdapterResult, BaseAdapter
 
@@ -209,5 +209,272 @@ class MockAutosysAdapter(BaseAdapter):
             success=True,
             data=data,
             raw_output=json.dumps(data),
+            evidence_snippet=evidence,
+        )
+
+
+class MockDynatraceAdapter(BaseAdapter):
+    """Returns sample Dynatrace VM health and metrics data."""
+
+    @property
+    def adapter_name(self) -> str:
+        return "MockDynatrace"
+
+    async def health_check(self) -> bool:
+        return True
+
+    async def execute(self, parameters: Dict[str, Any]) -> AdapterResult:
+        action = parameters.get("action", "vm_health")
+
+        if action == "vm_health":
+            return await self._mock_vm_health(parameters)
+        elif action == "metrics":
+            return await self._mock_metrics(parameters)
+        elif action == "problems":
+            return await self._mock_problems(parameters)
+        return AdapterResult(success=False, error=f"Unknown action: {action}")
+
+    async def _mock_vm_health(self, parameters: Dict[str, Any]) -> AdapterResult:
+        host_name = parameters.get("host_name", "app-server-01")
+        hosts = [
+            {
+                "entity_id": "HOST-1A2B3C4D5E6F",
+                "display_name": host_name,
+                "properties": {
+                    "osType": "LINUX",
+                    "state": "RUNNING",
+                    "cpuCores": 8,
+                    "memoryTotal": 32768,
+                },
+            },
+        ]
+        evidence = (
+            f"VM Health Check | Host filter: {host_name}\n"
+            f"  Hosts found: 1\n"
+            f"  - {host_name} (HOST-1A2B3C4D5E6F)\n"
+            f"  Active problems: 0 (healthy)"
+        )
+        return AdapterResult(
+            success=True,
+            data={
+                "hosts_found": 1,
+                "hosts": hosts,
+                "problems_count": 0,
+                "problems": [],
+                "healthy": True,
+            },
+            raw_output=json.dumps({"hosts": hosts, "problems": []}),
+            evidence_snippet=evidence,
+        )
+
+    async def _mock_metrics(self, parameters: Dict[str, Any]) -> AdapterResult:
+        metric_selector = parameters.get(
+            "metric_selector",
+            "builtin:host.cpu.usage,builtin:host.mem.usage",
+        )
+        metrics_data: List[Dict[str, Any]] = [
+            {
+                "metric_id": "builtin:host.cpu.usage",
+                "dimensions": {"dt.entity.host": "HOST-1A2B3C4D5E6F"},
+                "latest_value": 42.3,
+            },
+            {
+                "metric_id": "builtin:host.mem.usage",
+                "dimensions": {"dt.entity.host": "HOST-1A2B3C4D5E6F"},
+                "latest_value": 67.8,
+            },
+        ]
+        evidence = (
+            f"Dynatrace Metrics | Selector: {metric_selector}\n"
+            f"  builtin:host.cpu.usage [HOST-1A2B3C4D5E6F]: 42.3\n"
+            f"  builtin:host.mem.usage [HOST-1A2B3C4D5E6F]: 67.8"
+        )
+        return AdapterResult(
+            success=True,
+            data={"metric_count": 2, "metrics": metrics_data},
+            raw_output=json.dumps(metrics_data),
+            evidence_snippet=evidence,
+        )
+
+    async def _mock_problems(self, parameters: Dict[str, Any]) -> AdapterResult:
+        evidence = "Dynatrace Problems | Open: 0"
+        return AdapterResult(
+            success=True,
+            data={"problem_count": 0, "problems": []},
+            raw_output=json.dumps([]),
+            evidence_snippet=evidence,
+        )
+
+
+class MockWebUIScraperAdapter(BaseAdapter):
+    """Returns sample web UI scraping results."""
+
+    @property
+    def adapter_name(self) -> str:
+        return "MockWebUIScraper"
+
+    async def health_check(self) -> bool:
+        return True
+
+    async def execute(self, parameters: Dict[str, Any]) -> AdapterResult:
+        url = parameters.get("url", "https://app.example.com")
+        check_type = parameters.get("check_type", "page_load")
+
+        if check_type == "click_path":
+            return await self._mock_click_path(url, parameters)
+        return await self._mock_page_load(url, parameters)
+
+    async def _mock_page_load(
+        self, url: str, parameters: Dict[str, Any]
+    ) -> AdapterResult:
+        expected_text = parameters.get("expected_text", "")
+        text_found = True
+
+        evidence = (
+            f"Page Load Check | URL: {url}\n"
+            f"  Title: Application Dashboard\n"
+            f"  Load time: 1.23s\n"
+            f"  Page size: 45320 bytes\n"
+            f"  No error indicators detected"
+        )
+        if expected_text:
+            evidence += f"\n  Expected text '{expected_text}': FOUND"
+
+        return AdapterResult(
+            success=True,
+            data={
+                "url": url,
+                "title": "Application Dashboard",
+                "load_time_seconds": 1.23,
+                "page_size_bytes": 45320,
+                "expected_text_found": text_found,
+                "error_indicators": [],
+                "status": "healthy",
+            },
+            raw_output=json.dumps({"title": "Application Dashboard", "load_time": 1.23}),
+            evidence_snippet=evidence,
+        )
+
+    async def _mock_click_path(
+        self, url: str, parameters: Dict[str, Any]
+    ) -> AdapterResult:
+        click_steps = parameters.get("click_steps", [])
+        step_results: List[Dict[str, Any]] = [
+            {"step": "navigate", "url": url, "status": "success", "title": "Application Dashboard"},
+        ]
+        for i, step in enumerate(click_steps):
+            step_results.append({
+                "step": step.get("name", f"step-{i+1}"),
+                "action": step.get("action", "click"),
+                "status": "success",
+            })
+
+        evidence = (
+            f"Click Path Check | URL: {url}\n"
+            f"  Steps executed: {len(step_results)}\n"
+            f"  Total time: 3.45s"
+        )
+        for sr in step_results:
+            evidence += f"\n  [OK] {sr.get('step', '?')}: {sr.get('action', '?')}"
+
+        return AdapterResult(
+            success=True,
+            data={
+                "url": url,
+                "steps_executed": len(step_results),
+                "steps_passed": len(step_results),
+                "total_time_seconds": 3.45,
+                "step_results": step_results,
+                "all_passed": True,
+            },
+            raw_output=json.dumps(step_results),
+            evidence_snippet=evidence,
+        )
+
+
+class MockMainframeAdapter(BaseAdapter):
+    """Returns sample mainframe BEIM ASYNC status data."""
+
+    @property
+    def adapter_name(self) -> str:
+        return "MockMainframe"
+
+    async def health_check(self) -> bool:
+        return True
+
+    async def execute(self, parameters: Dict[str, Any]) -> AdapterResult:
+        action = parameters.get("action", "async_status")
+        job_name = parameters.get("job_name", "BEIM_ASYNC_JOB01")
+        expected_status = parameters.get("expected_status", "inact ok")
+
+        if action == "screen_check":
+            return await self._mock_screen_check(parameters)
+
+        jobs: List[Dict[str, Any]] = [
+            {
+                "job_name": job_name,
+                "status": "inact ok",
+                "status_description": "Inactive OK - Job completed successfully",
+                "matches_expected": True,
+            },
+            {
+                "job_name": f"{job_name}_SUB1",
+                "status": "inact ok",
+                "status_description": "Inactive OK - Job completed successfully",
+                "matches_expected": True,
+            },
+        ]
+
+        evidence = (
+            f"BEIM ASYNC Status | Host: mainframe-prod:23\n"
+            f"  [OK] {job_name}: inact ok (Inactive OK)\n"
+            f"  [OK] {job_name}_SUB1: inact ok (Inactive OK)\n"
+            f"  Expected: {expected_status} | All match: YES"
+        )
+
+        return AdapterResult(
+            success=True,
+            data={
+                "jobs": jobs,
+                "jobs_checked": len(jobs),
+                "all_match_expected": True,
+                "expected_status": expected_status,
+            },
+            raw_output=json.dumps(jobs),
+            evidence_snippet=evidence,
+        )
+
+    async def _mock_screen_check(
+        self, parameters: Dict[str, Any]
+    ) -> AdapterResult:
+        expected_text = parameters.get("expected_text", "")
+        screen_text = (
+            "CICS BEIM STATUS DISPLAY         DATE: 04/14/26  TIME: 09:55\n"
+            "TRANSACTION: BEIM  STATUS: ACTIVE\n"
+            "ASYNC JOBS:\n"
+            "  BEIM_ASYNC_JOB01    INACT OK     LAST RUN: 04/14/26 09:00\n"
+            "  BEIM_ASYNC_JOB02    INACT OK     LAST RUN: 04/14/26 09:15\n"
+            "  BEIM_ASYNC_JOB03    ACTIVE       STARTED:  04/14/26 09:50\n"
+            "PF3=EXIT  PF5=REFRESH  PF7=UP  PF8=DOWN"
+        )
+
+        text_found = True
+        if expected_text:
+            text_found = expected_text.lower() in screen_text.lower()
+
+        evidence = (
+            f"Mainframe Screen Check | Host: mainframe-prod:23\n"
+            f"  Screen content ({len(screen_text)} chars):\n"
+            f"  {screen_text[:300]}"
+        )
+
+        return AdapterResult(
+            success=text_found,
+            data={
+                "screen_text": screen_text,
+                "expected_text": expected_text,
+                "text_found": text_found,
+            },
+            raw_output=screen_text,
             evidence_snippet=evidence,
         )

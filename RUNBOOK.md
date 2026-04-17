@@ -5,7 +5,7 @@
 ### 1.1 Prerequisites
 
 - Python 3.11+ or Docker
-- Network access to: ServiceNow instance, Splunk REST API, IR360 API, Autosys CLI host, Windows file shares
+- Network access to: ServiceNow instance, Splunk REST API, IR360 API, Autosys CLI host, Windows file shares, Dynatrace API, mainframe TN3270 hosts
 - Service account credentials for each integration
 
 ### 1.2 Container Deployment
@@ -96,6 +96,17 @@ Response:
 | `WINDOWS_SHARE_ALLOWED_PREFIXES` | (none) | Comma-separated UNC path prefixes |
 | `AGENT_SOP_CONFIDENCE_THRESHOLD` | `0.6` | Minimum SOP match confidence |
 | `AGENT_MAX_CONCURRENT_INCIDENTS` | `5` | Max concurrent incident processing |
+| `DYNATRACE_BASE_URL` | (none) | Dynatrace environment URL (e.g. `https://your-env.live.dynatrace.com`) |
+| `DYNATRACE_API_TOKEN` | (none) | Dynatrace API token (scope: `entities.read`, `metrics.read`, `problems.read`) |
+| `DYNATRACE_VERIFY_SSL` | `true` | Verify SSL certificates for Dynatrace API |
+| `DYNATRACE_TIMEOUT` | `30` | Timeout in seconds for Dynatrace API calls |
+| `WEBUI_PAGE_TIMEOUT` | `30` | Page load timeout for headless Selenium browser |
+| `WEBUI_ALLOWED_DOMAINS` | (none) | Comma-separated allowed domains for web scraping |
+| `WEBUI_CHROME_BINARY` | (none) | Path to Chrome/Chromium binary (auto-detected if empty) |
+| `MAINFRAME_HOST` | (none) | Mainframe TN3270 hostname |
+| `MAINFRAME_PORT` | `23` | Mainframe TN3270 port |
+| `MAINFRAME_ALLOWED_TRANSACTIONS` | (none) | Comma-separated allowed CICS transactions |
+| `MAINFRAME_TIMEOUT` | `30` | Timeout in seconds for mainframe operations |
 | `AGENT_DEMO_MODE` | `false` | Use mock adapters (no real connections) |
 | `AGENT_LOG_LEVEL` | `INFO` | Logging level |
 | `AGENT_WEBHOOK_PORT` | `8080` | Webhook listener port |
@@ -118,7 +129,7 @@ SOPs can be stored in:
    - `steps`: Ordered list of step objects
 3. Each step requires:
    - `step_id`: Unique within the SOP
-   - `step_type`: One of `SPLUNK_SEARCH`, `MQ_CHECK`, `FILE_CHECK`, `AUTOSYS_STATUS`, `DECISION`, `NOTE`
+   - `step_type`: One of `SPLUNK_SEARCH`, `MQ_CHECK`, `FILE_CHECK`, `AUTOSYS_STATUS`, `DYNATRACE_VM_CHECK`, `DYNATRACE_METRICS`, `WEB_UI_CHECK`, `MAINFRAME_CHECK`, `DECISION`, `NOTE`
    - `parameters`: Type-specific parameters (see below)
 
 ### 3.3 Step Parameters Reference
@@ -170,6 +181,51 @@ Actions: `status` (job status via autorep), `dependencies` (job dependencies)
 }
 ```
 Rules: `any_failed` (any previous step failed), `all_success` (all steps succeeded)
+
+**DYNATRACE_VM_CHECK**
+```json
+{
+  "host_name": "app-server-01",
+  "host_group": "production"
+}
+```
+Checks VM/host health using Dynatrace Entities and Problems APIs.
+
+**DYNATRACE_METRICS**
+```json
+{
+  "metric_selector": "builtin:host.cpu.usage,builtin:host.mem.usage",
+  "entity_selector": "type(HOST),entityName(app-server-01)",
+  "time_range": "now-1h"
+}
+```
+Queries CPU/memory metrics from Dynatrace Metrics API.
+
+**WEB_UI_CHECK**
+```json
+{
+  "url": "https://app.example.com/dashboard",
+  "check_type": "click_path",
+  "click_steps": [
+    {"action": "click", "selector": "#login-btn", "name": "click-login"},
+    {"action": "wait", "value": "2", "name": "wait-load"},
+    {"action": "assert_text", "value": "Welcome", "name": "verify-welcome"}
+  ]
+}
+```
+Navigates a URL using headless Selenium/ChromeDriver, executing click-path steps.
+Also used for GCAS Launcher checks.
+
+**MAINFRAME_CHECK**
+```json
+{
+  "job_name": "BEIM_ASYNC_JOB01",
+  "expected_status": "inact ok",
+  "action": "async_status"
+}
+```
+Connects to mainframe via TN3270 and checks BEIM ASYNC job status.
+Looks for "inact ok" to confirm jobs completed successfully.
 
 **NOTE**
 ```json
@@ -267,7 +323,7 @@ In AI mode, the LLM is the primary decision-maker:
 
 1. **Incident analysis** - The LLM reads the ticket description and produces a preliminary analysis.
 2. **SOP selection** - The LLM uses the `select_sop` function to pick the best SOP, returning confidence and rationale.
-3. **Investigation** - The LLM drives a tool-calling loop, invoking `splunk_search`, `mq_check`, `autosys_status`, or `file_check` as needed.
+3. **Investigation** - The LLM drives a tool-calling loop, invoking `splunk_search`, `mq_check`, `autosys_status`, `file_check`, `dynatrace_vm_check`, `dynatrace_metrics_check`, `web_ui_check`, or `mainframe_async_check` as needed.
 4. **Decision** - Based on tool results, the LLM calls `resolve_incident` (with resolution summary) or `escalate_to_l2` (with reason and findings).
 
 ### 6.2 Switching Between AI and Rule-Based

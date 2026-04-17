@@ -60,6 +60,10 @@ The L1 Virtual Engineer Agent automates L1 incident triage and resolution by:
 │  │  │ Splunk  │ │  IR360  │ │ Autosys  │ │ Windows Share   │  │    │
 │  │  │ REST API│ │ MQ API  │ │ CLI      │ │ SMB Reader      │  │    │
 │  │  └─────────┘ └─────────┘ └──────────┘ └─────────────────┘  │    │
+│  │  ┌───────────┐ ┌──────────────┐ ┌──────────────────────┐   │    │
+│  │  │ Dynatrace │ │ Web UI       │ │ Mainframe TN3270     │   │    │
+│  │  │ REST API  │ │ Scraper      │ │ BEIM ASYNC           │   │    │
+│  │  └───────────┘ └──────────────┘ └──────────────────────┘   │    │
 │  └─────────────────────────────────────────────────────────────┘    │
 │                                                                     │
 │  ┌─────────────────────────────────────────────────────────────┐    │
@@ -152,6 +156,10 @@ Each SOP step is dispatched to the appropriate tool adapter:
 | `MQ_CHECK` | IR360Adapter | queue_manager, queue, action (depth/browse/status) |
 | `FILE_CHECK` | WindowsShareAdapter | unc_path, pattern, last_n_lines, time_window |
 | `AUTOSYS_STATUS` | AutosysAdapter | job_name, action (status/dependencies) |
+| `DYNATRACE_VM_CHECK` | DynatraceAdapter | host_name, host_group (VM health via Dynatrace Entities/Problems API) |
+| `DYNATRACE_METRICS` | DynatraceAdapter | metric_selector, entity_selector, time_range (CPU/memory via Metrics API) |
+| `WEB_UI_CHECK` | WebUIScraperAdapter | url, check_type, click_steps, expected_text (headless Selenium click-path) |
+| `MAINFRAME_CHECK` | MainframeAdapter | job_name, expected_status, action (TN3270 BEIM ASYNC screen scrape) |
 | `DECISION` | Internal | rule (any_failed, all_success, custom) |
 | `NOTE` | Internal | text (posted as work note) |
 
@@ -365,6 +373,10 @@ API endpoint. It supports:
 | `mq_check` | IR360Adapter | Check MQ queue depth / status |
 | `file_check` | WindowsShareAdapter | Read log file lines, filter by pattern |
 | `autosys_status` | AutosysAdapter | Query job status or dependencies |
+| `dynatrace_vm_check` | DynatraceAdapter | Check VM/host health (entities + problems) |
+| `dynatrace_metrics_check` | DynatraceAdapter | Query CPU/memory metrics from Dynatrace |
+| `web_ui_check` | WebUIScraperAdapter | Navigate URL click-path via headless Selenium |
+| `mainframe_async_check` | MainframeAdapter | Check MF BEIM ASYNC job status via TN3270 |
 | `post_work_note` | (internal) | Post a work note to the incident |
 | `escalate_to_l2` | (internal) | Escalate with reason and findings |
 | `resolve_incident` | (internal) | Resolve with summary and evidence |
@@ -391,7 +403,38 @@ API endpoint. It supports:
 - **Scripted mode**: Pre-defined responses returned in order (for deterministic tests)
 - **Auto mode**: Generates contextual responses based on message content (for demos)
 
-## 11. Future Enhancements
+## 11. New Tool Adapters (v2)
+
+### 11.1 Dynatrace Adapter (`DynatraceAdapter`)
+
+Connects to the Dynatrace REST API for two use cases:
+
+- **VM Health Check** (`dynatrace_vm_check`): Queries the Entities API (`/api/v2/entities`) to find hosts matching a name filter, then queries the Problems API (`/api/v2/problems`) for active problems affecting those hosts. Returns host details, problem count, and overall healthy/unhealthy status.
+- **Metrics Check** (`dynatrace_metrics_check`): Queries the Metrics API (`/api/v2/metrics/query`) for time-series data such as `builtin:host.cpu.usage` and `builtin:host.mem.usage`. Returns latest values with threshold evaluation.
+
+Configuration: `DYNATRACE_BASE_URL`, `DYNATRACE_API_TOKEN`, `DYNATRACE_VERIFY_SSL`, `DYNATRACE_TIMEOUT`.
+
+### 11.2 Web UI Scraper Adapter (`WebUIScraperAdapter`)
+
+Uses headless Selenium/ChromeDriver to perform automated click-path navigation on web applications. Supports two check types:
+
+- **Page Load** (`check_type: page_load`): Navigates to a URL, captures title, load time, page size, and optionally verifies expected text is present.
+- **Click Path** (`check_type: click_path`): Navigates to a URL then executes a sequence of steps (click, type, wait, assert_text, screenshot) defined as a list of actions with CSS/XPath selectors.
+
+Used for both **Application URL UI Actions** and **GCAS Launcher** checks. Runs in headless mode (no visible browser).
+
+Configuration: `WEBUI_PAGE_TIMEOUT`, `WEBUI_ALLOWED_DOMAINS`, `WEBUI_CHROME_BINARY`.
+
+### 11.3 Mainframe Adapter (`MainframeAdapter`)
+
+Connects to mainframe systems via TN3270 terminal emulator (using py3270 library) for screen scraping. All operations are read-only.
+
+- **ASYNC Status** (`mainframe_async_check`): Navigates to the BEIM status screen and parses job statuses. Looks for "inact ok" to confirm jobs completed successfully. Recognizes statuses: inact ok, active, inact error, inact abend, waiting, stopped.
+- **Screen Check** (`screen_check`): Navigates to any screen and checks for expected text presence.
+
+Configuration: `MAINFRAME_HOST`, `MAINFRAME_PORT`, `MAINFRAME_ALLOWED_TRANSACTIONS`, `MAINFRAME_TIMEOUT`.
+
+## 12. Future Enhancements
 
 - **Vault integration**: HashiCorp Vault / AWS Secrets Manager for production secrets
 - **Kubernetes deployment**: Helm chart with HPA for auto-scaling
