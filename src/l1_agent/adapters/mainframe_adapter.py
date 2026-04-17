@@ -9,6 +9,7 @@ All operations are read-only (screen scraping only, no data entry).
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from typing import Any, Dict, List, Optional
@@ -57,6 +58,10 @@ class MainframeAdapter(BaseAdapter):
 
     async def health_check(self) -> bool:
         """Check if the mainframe host is reachable via TN3270."""
+        return await asyncio.to_thread(self._health_check_sync)
+
+    def _health_check_sync(self) -> bool:
+        """Synchronous health check (runs in a thread)."""
         try:
             import socket
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -125,82 +130,80 @@ class MainframeAdapter(BaseAdapter):
             self._settings.default_navigation,
         )
 
-        emulator = self._connect()
-        if not emulator:
+        # Run all blocking TN3270 operations in a thread to avoid
+        # blocking the asyncio event loop.
+        screen_text = await asyncio.to_thread(
+            self._connect_navigate_disconnect, screen_navigation
+        )
+        if screen_text is None:
             return AdapterResult(
                 success=False,
                 error=f"Failed to connect to mainframe {self._host}:{self._port}",
             )
 
-        try:
-            # Navigate to the BEIM status screen
-            screen_text = self._navigate_screens(emulator, screen_navigation)
+        # Parse job statuses from the screen
+        jobs = _parse_beim_screen(screen_text, job_name)
 
-            # Parse job statuses from the screen
-            jobs = _parse_beim_screen(screen_text, job_name)
-
-            if not jobs:
-                evidence = (
-                    f"BEIM ASYNC Status | Host: {self._host}\n"
-                    f"  Job '{job_name}': NOT FOUND on screen\n"
-                    f"  Screen excerpt: {screen_text[:200]}"
-                )
-                return AdapterResult(
-                    success=True,
-                    data={
-                        "job_name": job_name,
-                        "status": "not found",
-                        "status_description": JOB_STATUS_MAP.get("not found", ""),
-                        "expected_status": expected_status,
-                        "match": False,
-                    },
-                    raw_output=screen_text[:500],
-                    evidence_snippet=evidence,
-                )
-
-            # Check if job status matches expected
-            evidence_lines = [f"BEIM ASYNC Status | Host: {self._host}"]
-            all_ok = True
-            job_data: List[Dict[str, Any]] = []
-
-            for job in jobs:
-                status = job["status"].lower()
-                matches_expected = expected_status.lower() in status
-                status_desc = JOB_STATUS_MAP.get(status, f"Unknown status: {status}")
-
-                job_entry = {
-                    "job_name": job["job_name"],
-                    "status": status,
-                    "status_description": status_desc,
-                    "matches_expected": matches_expected,
-                }
-                job_data.append(job_entry)
-
-                icon = "OK" if matches_expected else "WARN"
-                evidence_lines.append(
-                    f"  [{icon}] {job['job_name']}: {status} ({status_desc})"
-                )
-                if not matches_expected:
-                    all_ok = False
-
-            evidence_lines.append(
-                f"  Expected: {expected_status} | All match: {'YES' if all_ok else 'NO'}"
+        if not jobs:
+            evidence = (
+                f"BEIM ASYNC Status | Host: {self._host}\n"
+                f"  Job '{job_name}': NOT FOUND on screen\n"
+                f"  Screen excerpt: {screen_text[:200]}"
             )
-
-            metrics.increment("mainframe.async_status_checks")
             return AdapterResult(
                 success=True,
                 data={
-                    "jobs": job_data,
-                    "jobs_checked": len(job_data),
-                    "all_match_expected": all_ok,
+                    "job_name": job_name,
+                    "status": "not found",
+                    "status_description": JOB_STATUS_MAP.get("not found", ""),
                     "expected_status": expected_status,
+                    "match": False,
                 },
-                raw_output=json.dumps(job_data),
-                evidence_snippet="\n".join(evidence_lines),
+                raw_output=screen_text[:500],
+                evidence_snippet=evidence,
             )
-        finally:
-            self._disconnect(emulator)
+
+        # Check if job status matches expected
+        evidence_lines = [f"BEIM ASYNC Status | Host: {self._host}"]
+        all_ok = True
+        job_data: List[Dict[str, Any]] = []
+
+        for job in jobs:
+            status = job["status"].lower()
+            matches_expected = expected_status.lower() in status
+            status_desc = JOB_STATUS_MAP.get(status, f"Unknown status: {status}")
+
+            job_entry = {
+                "job_name": job["job_name"],
+                "status": status,
+                "status_description": status_desc,
+                "matches_expected": matches_expected,
+            }
+            job_data.append(job_entry)
+
+            icon = "OK" if matches_expected else "WARN"
+            evidence_lines.append(
+                f"  [{icon}] {job['job_name']}: {status} ({status_desc})"
+            )
+            if not matches_expected:
+                all_ok = False
+
+        evidence_lines.append(
+            f"  Expected: {expected_status} | All match: {'YES' if all_ok else 'NO'}"
+        )
+
+        metrics.increment("mainframe.async_status_checks")
+        return AdapterResult(
+            success=True,
+            data={
+                "jobs": job_data,
+                "jobs_checked": len(job_data),
+                "all_match_expected": all_ok,
+                "expected_status": expected_status,
+            },
+            raw_output=json.dumps(job_data),
+            evidence_snippet="\n".join(evidence_lines),
+        )
 
     async def _check_job_status(
         self, parameters: Dict[str, Any]
@@ -220,43 +223,61 @@ class MainframeAdapter(BaseAdapter):
         screen_navigation = parameters.get("screen_navigation", [])
         expected_text = parameters.get("expected_text", "")
 
-        emulator = self._connect()
-        if not emulator:
+        # Run all blocking TN3270 operations in a thread.
+        screen_text = await asyncio.to_thread(
+            self._connect_navigate_disconnect, screen_navigation
+        )
+        if screen_text is None:
             return AdapterResult(
                 success=False,
                 error=f"Failed to connect to mainframe {self._host}:{self._port}",
             )
 
+        text_found = True
+        if expected_text:
+            text_found = expected_text.lower() in screen_text.lower()
+
+        evidence = (
+            f"Mainframe Screen Check | Host: {self._host}\n"
+            f"  Screen content ({len(screen_text)} chars):\n"
+            f"  {screen_text[:300]}"
+        )
+        if expected_text:
+            evidence += f"\n  Expected '{expected_text}': {'FOUND' if text_found else 'NOT FOUND'}"
+
+        metrics.increment("mainframe.screen_checks")
+        return AdapterResult(
+            success=text_found,
+            data={
+                "screen_text": screen_text[:1000],
+                "expected_text": expected_text,
+                "text_found": text_found,
+            },
+            raw_output=screen_text[:500],
+            evidence_snippet=evidence,
+        )
+
+    # ── TN3270 connection helpers (all synchronous, called via to_thread) ──
+
+    def _connect_navigate_disconnect(
+        self, navigation: List[Dict[str, str]]
+    ) -> Optional[str]:
+        """Connect, navigate, capture screen, and disconnect.
+
+        This is the single blocking entry-point that runs entirely inside
+        a worker thread (via ``asyncio.to_thread``) so the event loop is
+        never blocked.
+
+        Returns:
+            The final screen text, or ``None`` if the connection failed.
+        """
+        emulator = self._connect()
+        if not emulator:
+            return None
         try:
-            screen_text = self._navigate_screens(emulator, screen_navigation)
-
-            text_found = True
-            if expected_text:
-                text_found = expected_text.lower() in screen_text.lower()
-
-            evidence = (
-                f"Mainframe Screen Check | Host: {self._host}\n"
-                f"  Screen content ({len(screen_text)} chars):\n"
-                f"  {screen_text[:300]}"
-            )
-            if expected_text:
-                evidence += f"\n  Expected '{expected_text}': {'FOUND' if text_found else 'NOT FOUND'}"
-
-            metrics.increment("mainframe.screen_checks")
-            return AdapterResult(
-                success=text_found,
-                data={
-                    "screen_text": screen_text[:1000],
-                    "expected_text": expected_text,
-                    "text_found": text_found,
-                },
-                raw_output=screen_text[:500],
-                evidence_snippet=evidence,
-            )
+            return self._navigate_screens(emulator, navigation)
         finally:
             self._disconnect(emulator)
-
-    # ── TN3270 connection helpers ─────────────────────────────────────
 
     def _connect(self) -> Optional[Any]:
         """Establish a TN3270 connection to the mainframe."""

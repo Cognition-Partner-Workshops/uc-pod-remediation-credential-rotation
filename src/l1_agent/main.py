@@ -61,19 +61,19 @@ class L1AgentService:
             retry_base_delay=settings.agent.retry_base_delay_seconds,
         )
         # Wire AI components when LLM is enabled
-        llm_client = None
+        self._llm_client = None
         ai_analyzer = None
         ai_executor = None
         if settings.llm.enabled:
             if settings.agent.demo_mode:
-                llm_client = MockLLMClient()
+                self._llm_client = MockLLMClient()
                 logger.info("AI mode enabled (demo: using MockLLMClient)")
             else:
-                llm_client = LLMClient(settings.llm)
+                self._llm_client = LLMClient(settings.llm)
                 logger.info("AI mode enabled (endpoint: %s)", settings.llm.endpoint)
-            ai_analyzer = AIAnalyzer(llm_client)
+            ai_analyzer = AIAnalyzer(self._llm_client)
             ai_executor = AIExecutor(
-                llm_client=llm_client,
+                llm_client=self._llm_client,
                 adapters=self._adapters,
             )
 
@@ -83,7 +83,7 @@ class L1AgentService:
             sop_parser=self._sop_parser,
             executor=self._executor,
             confidence_threshold=settings.agent.sop_confidence_threshold,
-            llm_client=llm_client,
+            llm_client=self._llm_client,
             ai_analyzer=ai_analyzer,
             ai_executor=ai_executor,
         )
@@ -220,12 +220,16 @@ class L1AgentService:
         poll_task.cancel()
         await runner.cleanup()
         await self._snow_client.close()
+        if self._llm_client is not None:
+            await self._llm_client.close()
 
     async def process_single(self, incident: Incident) -> Dict[str, Any]:
         """Process a single incident (for demo/testing)."""
         setup_logging(self._settings.agent.log_level)
         summary = await self._processor.process_incident(incident)
         await self._snow_client.close()
+        if self._llm_client is not None:
+            await self._llm_client.close()
         return {
             "incident_number": summary.incident_number,
             "outcome": summary.outcome.value,
