@@ -211,7 +211,8 @@ class LLMResponse:
     @classmethod
     def from_api_response(cls, data: Dict[str, Any]) -> "LLMResponse":
         """Parse an OpenAI-compatible API response."""
-        choice = data.get("choices", [{}])[0]
+        choices = data.get("choices", [{}])
+        choice = choices[0] if choices else {}
         message = choice.get("message", {})
         content = message.get("content", "") or ""
         finish_reason = choice.get("finish_reason", "")
