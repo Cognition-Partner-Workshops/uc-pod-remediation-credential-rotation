@@ -30,11 +30,14 @@ from src.l1_agent.utils.metrics import metrics
 logger = get_logger("ai_executor")
 
 
-class _TerminalToolAction(Exception):
+class _TerminalToolAction(BaseException):
     """Raised by tool_executor when a terminal action (resolve/escalate) is called.
 
-    This signals the chat_with_tools loop to stop iterating, preventing
-    the LLM from overwriting the outcome with subsequent tool calls.
+    Inherits from BaseException (not Exception) so that the ``except Exception``
+    handler inside ``chat_with_tools`` does not swallow it.  This allows the
+    exception to propagate up to ``execute_sop`` where it is explicitly caught,
+    stopping the tool-calling loop immediately and preventing the LLM from
+    overwriting the outcome with subsequent tool calls.
     """
 
     def __init__(self, result_json: str) -> None:
