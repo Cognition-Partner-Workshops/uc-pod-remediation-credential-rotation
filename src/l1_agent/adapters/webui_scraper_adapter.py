@@ -9,6 +9,7 @@ All operations are read-only (no form submissions or data modifications).
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from typing import Any, Dict, List
@@ -109,6 +110,14 @@ class WebUIScraperAdapter(BaseAdapter):
         self, url: str, parameters: Dict[str, Any]
     ) -> AdapterResult:
         """Verify a page loads successfully within timeout."""
+        return await asyncio.to_thread(
+            self._sync_check_page_load, url, parameters
+        )
+
+    def _sync_check_page_load(
+        self, url: str, parameters: Dict[str, Any]
+    ) -> AdapterResult:
+        """Synchronous page-load check, run in a thread."""
         expected_text = parameters.get("expected_text", "")
 
         driver = self._create_driver()
@@ -172,16 +181,23 @@ class WebUIScraperAdapter(BaseAdapter):
         self, url: str, parameters: Dict[str, Any]
     ) -> AdapterResult:
         """Execute a series of click-path steps on a web page."""
-        from selenium.webdriver.common.by import By
-        from selenium.webdriver.support import expected_conditions as EC
-        from selenium.webdriver.support.ui import WebDriverWait
-
         click_steps: List[Dict[str, str]] = parameters.get("click_steps", [])
         if not click_steps:
             return AdapterResult(
                 success=False,
                 error="No click_steps provided for click_path check",
             )
+        return await asyncio.to_thread(
+            self._sync_execute_click_path, url, click_steps
+        )
+
+    def _sync_execute_click_path(
+        self, url: str, click_steps: List[Dict[str, str]]
+    ) -> AdapterResult:
+        """Synchronous click-path execution, run in a thread."""
+        from selenium.webdriver.common.by import By
+        from selenium.webdriver.support import expected_conditions as EC
+        from selenium.webdriver.support.ui import WebDriverWait
 
         driver = self._create_driver()
         step_results: List[Dict[str, Any]] = []
@@ -220,8 +236,7 @@ class WebUIScraperAdapter(BaseAdapter):
 
                     elif step_action == "wait":
                         wait_seconds = float(value) if value else 2.0
-                        import asyncio
-                        await asyncio.sleep(wait_seconds)
+                        time.sleep(wait_seconds)
                         step_results.append({
                             "step": step_name,
                             "action": "wait",
@@ -311,6 +326,14 @@ class WebUIScraperAdapter(BaseAdapter):
         self, url: str, parameters: Dict[str, Any]
     ) -> AdapterResult:
         """Check for specific element presence on a page."""
+        return await asyncio.to_thread(
+            self._sync_check_element, url, parameters
+        )
+
+    def _sync_check_element(
+        self, url: str, parameters: Dict[str, Any]
+    ) -> AdapterResult:
+        """Synchronous element check, run in a thread."""
         from selenium.webdriver.common.by import By
         from selenium.webdriver.support import expected_conditions as EC
         from selenium.webdriver.support.ui import WebDriverWait

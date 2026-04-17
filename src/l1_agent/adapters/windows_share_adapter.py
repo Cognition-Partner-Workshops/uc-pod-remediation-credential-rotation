@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 from typing import Any, Dict, List
 
@@ -101,6 +102,10 @@ class WindowsShareAdapter(BaseAdapter):
         In production, this would use smbprotocol for true SMB access.
         Currently uses OS-level file access (works with mounted shares).
         """
+        return await asyncio.to_thread(self._read_file_sync, path, last_n)
+
+    def _read_file_sync(self, path: str, last_n: int) -> List[str]:
+        """Synchronous file read, run in a thread to avoid blocking the event loop."""
         # Convert UNC to OS path if needed
         os_path = self._unc_to_os_path(path)
 

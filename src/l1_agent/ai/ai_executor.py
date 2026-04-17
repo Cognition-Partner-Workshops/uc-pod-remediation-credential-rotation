@@ -29,6 +29,18 @@ from src.l1_agent.utils.metrics import metrics
 
 logger = get_logger("ai_executor")
 
+
+class _TerminalToolAction(Exception):
+    """Raised by tool_executor when a terminal action (resolve/escalate) is called.
+
+    This signals the chat_with_tools loop to stop iterating, preventing
+    the LLM from overwriting the outcome with subsequent tool calls.
+    """
+
+    def __init__(self, result_json: str) -> None:
+        self.result_json = result_json
+        super().__init__("terminal tool action")
+
 # ── System prompt for the execution phase ────────────────────────────
 
 EXECUTION_SYSTEM_PROMPT = """\
@@ -180,7 +192,9 @@ class AIExecutor:
                     evidence=escalation_note,
                     duration_ms=(time.monotonic() - step_start) * 1000,
                 )
-                return json.dumps({"status": "escalated", "reason": reason})
+                raise _TerminalToolAction(
+                    json.dumps({"status": "escalated", "reason": reason})
+                )
 
             if tool_name == "resolve_incident":
                 resolution_summary = arguments.get("resolution_summary", "")
@@ -207,7 +221,9 @@ class AIExecutor:
                     evidence=resolve_note,
                     duration_ms=(time.monotonic() - step_start) * 1000,
                 )
-                return json.dumps({"status": "resolved", "summary": resolution_summary})
+                raise _TerminalToolAction(
+                    json.dumps({"status": "resolved", "summary": resolution_summary})
+                )
 
             # Handle adapter-backed tools
             adapter_key = _tool_to_adapter_key(tool_name)
@@ -293,6 +309,10 @@ class AIExecutor:
                 tool_executor=tool_executor,
                 max_iterations=self._max_iterations,
             )
+        except _TerminalToolAction:
+            # Expected: resolve_incident or escalate_to_l2 was called.
+            # outcome/escalation_reason already set by the closure.
+            pass
         except Exception as exc:
             logger.error("AI execution loop failed: %s", exc)
             outcome = ExecutionOutcome.FAILED
