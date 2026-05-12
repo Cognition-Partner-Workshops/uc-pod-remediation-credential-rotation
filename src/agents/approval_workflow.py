@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from src.config.settings import settings
-from src.models.credential import PodFailure, RemediationAction, RemediationStatus
+from src.models.credential import RemediationAction, RemediationStatus
 from src.utils.servicenow_client import ApprovalState, ServiceNowClient
 
 logger = logging.getLogger(__name__)
