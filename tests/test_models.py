@@ -4,9 +4,6 @@ from datetime import datetime, timedelta
 
 from src.models.credential import (
     CredentialRotation,
-    PodFailure,
-    RemediationAction,
-    RemediationStatus,
     RotationStatus,
 )
 from src.models.service_account import ServiceAccount, ServiceAccountInventory
