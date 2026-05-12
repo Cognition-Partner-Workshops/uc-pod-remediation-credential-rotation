@@ -86,7 +86,7 @@ jobs:
         run: |
           for f in k8s/base/*.yaml; do
             echo "Validating $f..."
-            python -c "import yaml, sys; yaml.safe_load(open(sys.argv[1]))" "$f"
+            python -c "import yaml, sys; list(yaml.safe_load_all(open(sys.argv[1])))" "$f"
           done
 
       - name: Build kustomize overlay
